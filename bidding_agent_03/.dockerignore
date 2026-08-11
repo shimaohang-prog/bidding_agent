@@ -1,0 +1,12 @@
+.env
+.git
+.idea
+__pycache__
+*.pyc
+.pytest_cache
+frontend/node_modules
+frontend/dist
+uploads
+milvus_db
+data
+tests
