@@ -57,6 +57,52 @@ class RetrievalModelTests(unittest.TestCase):
         result = reciprocal_rank_fusion([first, second])
         self.assertEqual(result[0].source_id, "a#1")
 
+    def test_rrf_merges_identical_content_with_different_source_ids(self):
+        first = Candidate(
+            source_type="category_vector",
+            category="laws",
+            source_id="law-a.txt#1",
+            content="投标保证金不得超过项目估算价的百分之二。",
+            rank_positions={"semantic:0:laws:dense:main.db": 1},
+        )
+        second = Candidate(
+            source_type="category_vector",
+            category="laws",
+            source_id="law-b.txt#9",
+            content="  投标保证金不得超过项目估算价的百分之二。  ",
+            rank_positions={"semantic:0:laws:bm25:main.db": 2},
+        )
+
+        result = reciprocal_rank_fusion([first, second])
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(len(result[0].rank_positions), 2)
+        self.assertEqual(
+            {item["source_id"] for item in result[0].metadata["duplicate_sources"]},
+            {"law-a.txt#1", "law-b.txt#9"},
+        )
+
+    def test_rrf_does_not_merge_same_content_across_categories(self):
+        content = "相同正文在不同分类中仍保留独立证据。"
+        laws = Candidate(
+            source_type="category_vector",
+            category="laws",
+            source_id="law.txt#1",
+            content=content,
+            rank_positions={"laws": 1},
+        )
+        policy = Candidate(
+            source_type="category_vector",
+            category="policy",
+            source_id="policy.txt#1",
+            content=content,
+            rank_positions={"policy": 1},
+        )
+
+        result = reciprocal_rank_fusion([laws, policy])
+
+        self.assertEqual(len(result), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

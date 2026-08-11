@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """统一六分类向量与联网结果，并用 RRF 融合名次。"""
 
+import hashlib
 import json
+import unicodedata
 from typing import Any, Iterable
 
 from common.retrieval_models import Candidate
@@ -89,6 +91,88 @@ def normalise_web_results(
     return output
 
 
+def _content_fingerprint(content: str) -> str | None:
+    """Return a conservative fingerprint for non-empty candidate content."""
+    normalized = " ".join(
+        unicodedata.normalize("NFKC", content or "").split()
+    )
+    if not normalized:
+        return None
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _source_reference(candidate: Candidate) -> dict[str, Any]:
+    """Keep traceability when identical content has multiple source IDs."""
+    return {
+        "source_type": candidate.source_type,
+        "category": candidate.category,
+        "source_id": candidate.source_id,
+        "title": candidate.title,
+        "source": candidate.metadata.get("source"),
+        "url": candidate.metadata.get("url"),
+    }
+
+
+def _merge_rank_evidence(
+    current: Candidate,
+    candidate: Candidate,
+) -> None:
+    current.exact_title_match = (
+        current.exact_title_match or candidate.exact_title_match
+    )
+    if (
+        current.original_score is None
+        or (
+            candidate.original_score is not None
+            and candidate.original_score > current.original_score
+        )
+    ):
+        current.original_score = candidate.original_score
+    current.retrieval_lists = list(
+        dict.fromkeys(current.retrieval_lists + candidate.retrieval_lists)
+    )
+    for name, rank in candidate.rank_positions.items():
+        previous = current.rank_positions.get(name)
+        current.rank_positions[name] = (
+            rank if previous is None else min(previous, rank)
+        )
+
+
+def _deduplicate_same_content(
+    candidates: Iterable[Candidate],
+) -> list[Candidate]:
+    """Merge identical non-empty content inside the same category."""
+    merged: dict[tuple[str, str], Candidate] = {}
+    output: list[Candidate] = []
+    for candidate in candidates:
+        fingerprint = _content_fingerprint(candidate.content)
+        if fingerprint is None:
+            output.append(candidate.model_copy(deep=True))
+            continue
+
+        key = (candidate.category, fingerprint)
+        current = merged.get(key)
+        if current is None:
+            current = candidate.model_copy(deep=True)
+            merged[key] = current
+            output.append(current)
+            continue
+
+        _merge_rank_evidence(current, candidate)
+        references = current.metadata.get("duplicate_sources")
+        if not isinstance(references, list):
+            references = []
+        for reference in (
+            _source_reference(current),
+            _source_reference(candidate),
+        ):
+            if reference not in references:
+                references.append(reference)
+        current.metadata["duplicate_sources"] = references
+
+    return output
+
+
 def deduplicate_candidates(
     candidates: Iterable[Candidate],
 ) -> list[Candidate]:
@@ -120,7 +204,7 @@ def deduplicate_candidates(
             current.rank_positions[name] = (
                 rank if previous is None else min(previous, rank)
             )
-    return list(merged.values())
+    return _deduplicate_same_content(merged.values())
 
 
 def reciprocal_rank_fusion(
