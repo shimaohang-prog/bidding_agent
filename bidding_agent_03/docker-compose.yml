@@ -1,0 +1,112 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: bidding_agent
+      MYSQL_USER: bidding
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
+    volumes: ["mysql_data:/var/lib/mysql"]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: mysql+asyncmy://bidding:${MYSQL_PASSWORD}@mysql:3306/bidding_agent
+      REDIS_URL: redis://redis:6379/0
+      COOKIE_SECURE: "true"
+      API_WORKERS: "1"
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips", "*"]
+    volumes:
+      - ./milvus_db:/app/milvus_db
+      - ./data:/app/data:ro
+      - uploads:/app/uploads
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  file-worker:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: mysql+asyncmy://bidding:${MYSQL_PASSWORD}@mysql:3306/bidding_agent
+      REDIS_URL: redis://redis:6379/0
+    command: ["python", "-m", "backend.workers.file_worker"]
+    volumes:
+      - ./milvus_db:/app/milvus_db
+      - uploads:/app/uploads
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  nginx:
+    build:
+      context: .
+      dockerfile: deploy/nginx/Dockerfile
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./deploy/certs:/etc/nginx/certs:ro
+    depends_on: [api]
+    restart: unless-stopped
+
+  etcd:
+    profiles: ["milvus-server"]
+    image: quay.io/coreos/etcd:v3.5.18
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    volumes: ["etcd_data:/etcd"]
+
+  minio:
+    profiles: ["milvus-server"]
+    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?set MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY}
+    command: minio server /data
+    volumes: ["minio_data:/data"]
+
+  milvus:
+    profiles: ["milvus-server"]
+    image: milvusdb/milvus:v2.6.4
+    command: ["milvus", "run", "standalone"]
+    security_opt: ["seccomp:unconfined"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:?set MINIO_ACCESS_KEY}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY}
+    depends_on: [etcd, minio]
+    volumes: ["milvus_data:/var/lib/milvus"]
+    ports: ["19530:19530", "9091:9091"]
+
+volumes:
+  mysql_data:
+  redis_data:
+  uploads:
+  etcd_data:
+  minio_data:
+  milvus_data:
