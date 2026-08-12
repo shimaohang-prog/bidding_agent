@@ -17,6 +17,14 @@ from backend.services.generation_manager import SocketConnection
 
 router = APIRouter(tags=["websocket"])
 ZERO_ID = "00000000-0000-0000-0000-000000000000"
+DEFAULT_CONVERSATION_TITLE = "新会话"
+
+
+def _automatic_conversation_title(question: str, max_length: int = 28) -> str:
+    title = " ".join(question.split()).strip("，。！？!?；;：:")
+    if len(title) <= max_length:
+        return title
+    return f"{title[:max_length].rstrip()}…"
 
 
 async def _authenticate(websocket: WebSocket):
@@ -68,7 +76,8 @@ async def chat_websocket(websocket: WebSocket) -> None:
 
             async with websocket.app.state.session_factory() as session:
                 conversations = ConversationRepository(session)
-                if await conversations.owned(user.id, conversation_id) is None:
+                conversation = await conversations.owned(user.id, conversation_id)
+                if conversation is None:
                     await connection.send({"type": "error", "request_id": request_id, "conversation_id": conversation_id, "seq": None, "payload": {"error_code": "CONVERSATION_NOT_FOUND", "message": "会话不存在"}})
                     continue
 
@@ -98,7 +107,7 @@ async def chat_websocket(websocket: WebSocket) -> None:
                             await connection.send({"type": "error", "request_id": request_id, "conversation_id": conversation_id, "seq": None, "payload": {"error_code": "JOB_NOT_FOUND", "message": "生成任务不存在"}})
                             continue
                         manager.subscribe(request_id, connection)
-                        await connection.send({"type": "ack", "request_id": request_id, "conversation_id": conversation_id, "seq": None, "payload": {"idempotent": True, "status": existing.status}})
+                        await connection.send({"type": "ack", "request_id": request_id, "conversation_id": conversation_id, "seq": None, "payload": {"idempotent": True, "status": existing.status, "conversation_title": conversation.title}})
                         for item in await websocket.app.state.cache.replay(request_id, 0):
                             await connection.send(item)
                         continue
@@ -121,6 +130,8 @@ async def chat_websocket(websocket: WebSocket) -> None:
                         await connection.send({"type": "error", "request_id": request_id, "conversation_id": conversation_id, "seq": None, "payload": {"error_code": "FILE_NOT_READY", "message": "文件不存在、无权访问或尚未处理完成"}})
                         continue
                     question = " ".join(event.question.split())
+                    if conversation.title == DEFAULT_CONVERSATION_TITLE:
+                        conversation.title = _automatic_conversation_title(question)
                     message = await MessageRepository(session).create(
                         user_id=user.id, conversation_id=conversation_id, role="user", content=question,
                         request_id=request_id, client_message_id=event.client_message_id,
@@ -135,7 +146,7 @@ async def chat_websocket(websocket: WebSocket) -> None:
                         continue
                     await session.commit()
                     manager.subscribe(request_id, connection)
-                    await connection.send({"type": "ack", "request_id": request_id, "conversation_id": conversation_id, "seq": None, "payload": {"idempotent": not created, "status": job.status}})
+                    await connection.send({"type": "ack", "request_id": request_id, "conversation_id": conversation_id, "seq": None, "payload": {"idempotent": not created, "status": job.status, "conversation_title": conversation.title}})
                     if created:
                         manager.start(
                             request_id=request_id, user_id=user.id, conversation_id=conversation_id,

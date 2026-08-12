@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
 
-from backend.api import auth, conversations, files, health, websocket
+from backend.api import auth, conversations, files, health, knowledge, websocket
 from backend.cache.store import RedisCacheStore
 from backend.core.config import Settings, get_settings
 from backend.core.errors import install_error_handlers
@@ -99,7 +99,7 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
         logger.info("request_complete request_id=%s method=%s path=%s status=%s", request_id, request.method, request.url.path, response.status_code)
         return response
 
-    for router in (health.router, auth.router, conversations.router, files.router, websocket.router):
+    for router in (health.router, auth.router, conversations.router, files.router, knowledge.router, websocket.router):
         app.include_router(router, prefix=settings.api_prefix)
     install_error_handlers(app)
     return app

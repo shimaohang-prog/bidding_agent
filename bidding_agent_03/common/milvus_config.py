@@ -5,6 +5,7 @@ import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Final, Iterable
 
 from dotenv import load_dotenv
@@ -25,6 +26,8 @@ EMBEDDING_MODEL: Final[str] = os.getenv(
     "BAAI/bge-base-zh-v1.5",
 ).strip()
 COLLECTION_NAME: Final[str] = "records"
+_CLIENT_LOCKS_GUARD = Lock()
+_CLIENT_LOCKS: dict[Path, Lock] = {}
 
 
 def _float_env(name: str, default: float) -> float:
@@ -200,13 +203,19 @@ def iter_existing_shards(
 
 
 def get_milvus_client(db_path: Path, *, create_parent: bool = False):
-    """为一个分类分片建立短生命周期的 Milvus Lite 连接。"""
+    """建立客户端；同一 Lite 分片的首次服务启动必须进程内串行。"""
     from pymilvus import MilvusClient
 
     path = Path(db_path).expanduser().resolve()
     if create_parent:
         path.parent.mkdir(parents=True, exist_ok=True)
-    return MilvusClient(uri=str(path))
+    # milvus-lite 的 ServerManager 在真正启动服务时会暂时释放自身锁，
+    # 两个线程首次打开同一路径会同时争抢 LOCK 文件。这里按路径保护
+    # 启动阶段；服务启动后，PyMilvus 会复用同一 gRPC 服务和连接。
+    with _CLIENT_LOCKS_GUARD:
+        start_lock = _CLIENT_LOCKS.setdefault(path, Lock())
+    with start_lock:
+        return MilvusClient(uri=str(path))
 
 
 def close_milvus_client(client) -> None:
@@ -215,4 +224,3 @@ def close_milvus_client(client) -> None:
     close = getattr(client, "close", None)
     if callable(close):
         close()
-

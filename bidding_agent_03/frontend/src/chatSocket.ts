@@ -45,7 +45,12 @@ export class ChatSocket {
     }
   }
 
-  close() { this.manualClose = true; this.socket?.close() }
+  close() {
+    this.manualClose = true
+    this.active.clear()
+    if (this.pingTimer) clearInterval(this.pingTimer)
+    this.socket?.close()
+  }
   listen(listener: Listener) { this.listeners.add(listener); return () => this.listeners.delete(listener) }
   private send(body: object) {
     if (this.socket?.readyState !== WebSocket.OPEN) throw new Error('连接尚未就绪')

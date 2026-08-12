@@ -52,6 +52,9 @@ class AsyncRAGService:
         hits: list[dict[str, Any]] = []
         warnings: list[str] = []
         lock = anyio.Lock()
+        # 单个复杂问题最多占两个同步检索槽，避免它把全局线程额度
+        # 全部占满，使其他用户或会话只能等该问题检索结束。
+        request_search_slots = anyio.CapacityLimiter(2)
 
         async def run(index: int, task: SemanticQueryTask) -> None:
             categories = [item for item in task.categories if item in VECTOR_CATEGORIES]
@@ -66,13 +69,14 @@ class AsyncRAGService:
             category_lock = anyio.Lock()
 
             async def run_category(category: str) -> None:
-                category_result, category_warnings = await anyio.to_thread.run_sync(
-                    partial(
-                        category_vector_search_multi, task.query, categories=[category],
-                        subcategory_hints=task.subcategory_hints, metadata_filters=task.metadata_filters,
-                        top_k_per_category=task.top_k_per_category, query_vector=query_vector,
-                    ), limiter=self.limiter,
-                )
+                async with request_search_slots:
+                    category_result, category_warnings = await anyio.to_thread.run_sync(
+                        partial(
+                            category_vector_search_multi, task.query, categories=[category],
+                            subcategory_hints=task.subcategory_hints, metadata_filters=task.metadata_filters,
+                            top_k_per_category=task.top_k_per_category, query_vector=query_vector,
+                        ), limiter=self.limiter,
+                    )
                 async with category_lock:
                     result.extend(category_result)
                     task_warnings.extend(category_warnings)

@@ -33,7 +33,7 @@ class Settings(BaseSettings):
 
     max_question_chars: int = Field(default=6000, ge=100, le=20000)
     max_upload_bytes: int = Field(default=20 * 1024 * 1024, ge=1024, le=200 * 1024 * 1024)
-    max_active_generations_per_user: int = Field(default=2, ge=1, le=10)
+    max_active_generations_per_user: int = Field(default=8, ge=1, le=32)
     rate_limit_per_minute: int = Field(default=30, ge=1, le=600)
     websocket_idle_seconds: int = Field(default=90, ge=20, le=600)
     reconnect_grace_seconds: int = Field(default=120, ge=10, le=1800)
@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     # private documents stored in local Milvus Lite.
     private_milvus_uri: str = "milvus_db/private/main.db"
     api_workers: int = Field(default=1, ge=1, le=32)
-    milvus_thread_limit: int = Field(default=1, ge=1, le=16)
+    milvus_thread_limit: int = Field(default=4, ge=1, le=16)
     upload_root: Path = PROJECT_ROOT / "uploads"
     private_collection: str = "private_documents"
     file_worker_stream: str = "bidding:file-jobs"
