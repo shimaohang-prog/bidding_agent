@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.dependencies import current_user, db_session
@@ -36,6 +37,26 @@ async def list_files(
     if await ConversationRepository(session).owned(user.id, conversation_id) is None:
         raise ApiError(404, "CONVERSATION_NOT_FOUND", "会话不存在")
     return await FileRepository(session).list_owned(user.id, conversation_id)
+
+
+@router.get("/{file_id}/content")
+async def open_uploaded_file(
+    file_id: str, request: Request,
+    user: User = Depends(current_user), session: AsyncSession = Depends(db_session),
+):
+    item = await FileRepository(session).owned(user.id, file_id)
+    if item is None:
+        raise ApiError(404, "FILE_NOT_FOUND", "文件不存在")
+    path = service(request, session)._path(item.stored_name)
+    if not path.is_file():
+        raise ApiError(404, "FILE_NOT_FOUND", "文件不存在")
+    return FileResponse(
+        path,
+        media_type=item.mime_type,
+        filename=item.original_name,
+        content_disposition_type="inline",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.get("/{file_id}", response_model=FileView)

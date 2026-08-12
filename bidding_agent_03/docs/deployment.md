@@ -36,7 +36,7 @@ pnpm run dev
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
-必须保持 `MILVUS_MODE=lite`、`API_WORKERS=1`。Lite 数据库是本地文件，不能作为多 Worker 高并发共享存储；每个 API 进程也会重复加载 BGE/Torch。文件 Worker 与 API 对私有 Lite 库的并发仍需谨慎安排，遇到文件锁应停止占用者，不能删除数据库。
+必须保持 `MILVUS_MODE=lite`、`API_WORKERS=1`。单进程事件循环可以并发处理不同用户及同一用户的多个会话；`MILVUS_THREAD_LIMIT` 只控制同步 Milvus/Embedding 桥接线程数，单个问答请求最多占用其中两个分类检索槽，避免复杂问题独占全部线程。Lite 数据库仍是本地文件，不能作为多 Worker 或无限高并发共享存储；每个 API 进程也会重复加载 BGE/Torch。文件 Worker 与 API 对私有 Lite 库的并发仍需谨慎安排，遇到文件锁应停止占用者，不能删除数据库。
 
 产品 CSV 修改后仍显式执行：
 
@@ -92,10 +92,22 @@ python tests/load/ws_benchmark.py --url wss://localhost/api/v1/ws/chat --origin 
 
 脚本输出并发数、P50/P95/P99、首 Token 时间、总响应时间和错误率。Lite 阶段只压测单 Worker。CPU/内存请同时记录 Windows 性能监视器或 `docker stats`；外部 API 的 429 需单独计入限流指标。
 
-## 原 CLI
+## 异步 CLI
 
 ```powershell
 python main.py "安徽省某招标项目适用哪些法律政策？" --show-plan
 ```
 
-CLI 继续复用原同步领域 Service；它会使用真实 DeepSeek/Tavily 配置并可能读取本地 Milvus，不能把未执行的命令视为已验证。
+单问题默认实时打印 DeepSeek token。多个问题可以共享同一异步运行时并发执行：
+
+```powershell
+python main.py "问题一" "问题二" --concurrency 2
+```
+
+如果网页后端正在监听 `127.0.0.1:8000`，CLI 会自动切换到服务端模式并安全提示输入 Web 登录信息，多个问题通过一个 WebSocket 分别创建会话并同时生成。也可以显式执行：
+
+```powershell
+python main.py "问题一" "问题二" --server-url http://127.0.0.1:8000 --username YOUR_USER
+```
+
+这是 Milvus Lite 下让网页和 CLI 同时工作的必要边界：不同进程不能直接打开同一个 Lite 数据目录。批量流使用带 `question_index` 和 `elapsed_ms` 的 JSON 行区分同时返回的 token，结束后输出各问题的开始偏移、首 token 和总耗时；增加 `--no-stream` 可只显示完整答案。CLI 与 Web 继续复用同一检索、证据上下文和生成消息管线。它会使用真实 DeepSeek/Tavily 配置并可能读取本地 Milvus，不能把未执行的外部服务命令视为已验证。

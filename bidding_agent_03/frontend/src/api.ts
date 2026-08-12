@@ -1,4 +1,4 @@
-import type { Conversation, Message, UploadedFile, User } from './types'
+import type { Conversation, KnowledgeFile, Message, UploadedFile, User } from './types'
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message) }
@@ -26,6 +26,9 @@ export const api = {
   deleteConversation: (id: string) => request<void>(`/conversations/${id}`, { method: 'DELETE' }),
   messages: (id: string, beforeId?: string) => request<Message[]>(`/conversations/${id}/messages?limit=50${beforeId ? `&before_id=${encodeURIComponent(beforeId)}` : ''}`),
   files: (conversationId: string) => request<UploadedFile[]>(`/files?conversation_id=${encodeURIComponent(conversationId)}`),
+  knowledgeFiles: (category: string) => request<KnowledgeFile[]>(`/knowledge/${encodeURIComponent(category)}/files`),
+  knowledgeFileUrl: (category: string, path: string) => `/api/v1/knowledge/${encodeURIComponent(category)}/open?path=${encodeURIComponent(path)}`,
+  uploadedFileUrl: (id: string) => `/api/v1/files/${encodeURIComponent(id)}/content`,
   upload: (conversationId: string, file: File) => {
     const data = new FormData(); data.append('conversation_id', conversationId); data.append('upload', file)
     return request<UploadedFile>('/files', { method: 'POST', body: data })

@@ -80,3 +80,5 @@ class DeepSeekStreamClient:
                     raise UpstreamStreamError("DeepSeek 返回空流")
         except httpx.TimeoutException as exc:
             raise UpstreamStreamError("DeepSeek 流响应超时") from exc
+        except httpx.RequestError as exc:
+            raise UpstreamStreamError("DeepSeek 流连接失败") from exc
